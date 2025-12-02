@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slither AI Arena (Separated Layout)</title>
+    <title>Slither.io AI Arena (V19 - Player Prediction Evasion)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
@@ -18,6 +18,9 @@
             box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 4px, 6px, 0.2);
             touch-action: none; /* Prevent scroll on touch devices */
             cursor: crosshair;
+        }
+        #canvas-wrapper {
+            transition: box-shadow 0.15s ease-out;
         }
         .leaderboard-item {
             transition: all 0.3s ease;
@@ -37,26 +40,42 @@
             animation: flashRed 0.2s ease-in-out 5; 
         }
 
+        /* Sprinting Glow Effect on Canvas */
+        .sprinting-glow #gameCanvas {
+             box-shadow: 0 0 20px 5px rgba(59, 130, 246, 0.8), 0 0 5px 0 rgba(59, 130, 246, 0.5) inset;
+        }
+
         #info-panel {
-            /* Updated to match the canvas height exactly (600px) */
             height: 600px; 
             width: 280px;
             box-sizing: border-box; 
+        }
+        
+        .sprint-indicator {
+            height: 8px;
+            border-radius: 9999px;
+            background-color: #10b981;
+            transition: width 0.1s ease-out;
         }
     </style>
 </head>
 <body>
 
 <div class="min-h-screen p-4 flex flex-col items-center">
-    <h1 class="text-3xl font-bold text-white mb-6 mt-4">🐍 Slither AI Arena (Predator Mode)</h1>
+    <h1 class="text-3xl font-bold text-white mb-6 mt-4">🐍 Slither AI Arena (V19 - Player Prediction Evasion)</h1>
 
-    <!-- New Container for Side-by-Side Layout -->
+    <!-- Container for Side-by-Side Layout -->
     <div id="game-and-info-container" class="flex gap-6 max-w-6xl w-full justify-center">
 
         <!-- 1. Game Canvas Area -->
         <div id="canvas-wrapper" class="relative flex-shrink-0">
             <canvas id="gameCanvas" width="800" height="600"></canvas>
             
+            <!-- Sprint Status Bar -->
+            <div class="absolute bottom-4 left-1/2 -translate-x-1/2 w-48 bg-gray-700/80 p-1 rounded-full shadow-lg">
+                <div id="sprint-bar" class="sprint-indicator" style="width: 100%;"></div>
+            </div>
+
             <!-- Status Message Overlay (Centered) -->
             <div id="status-message" class="absolute inset-0 flex items-center justify-center pointer-events-none hidden">
                 <div id="status-text" class="p-4 bg-red-800/80 text-red-300 rounded-lg text-2xl font-extrabold shadow-2xl animate-pulse">
@@ -68,18 +87,18 @@
         <!-- 2. Dedicated Info Panel (Leaderboard, Score, Kill Log, Minimap) -->
         <div id="info-panel" class="bg-gray-900/80 backdrop-blur-sm p-4 rounded-lg border border-gray-700 shadow-xl flex flex-col">
             
+            <!-- Player Score -->
+            <div class="mb-4 pb-2 border-b border-gray-700">
+                <p class="text-lg font-semibold text-gray-400">Your Size (Score):</p>
+                <p id="player-score" class="text-3xl font-extrabold text-green-400 mb-2">0</p>
+            </div>
+
             <!-- Leaderboard -->
             <div class="mb-4">
                 <h2 class="text-xl font-bold text-gray-200 mb-2 border-b border-gray-700 pb-1">Leaderboard</h2>
                 <div id="leaderboard" class="space-y-1 text-sm">
                     <!-- Leaderboard items injected here -->
                 </div>
-            </div>
-
-            <!-- Player Score -->
-            <div class="mt-2 pt-2 border-t border-gray-700">
-                <p class="text-lg font-semibold text-gray-400">Your Score:</p>
-                <p id="player-score" class="text-3xl font-extrabold text-green-400">0</p>
             </div>
 
             <!-- Kill Log Container -->
@@ -101,7 +120,8 @@
 
     <!-- Minimal Info Footer -->
     <div id="info-footer" class="text-sm text-gray-400 mt-4 p-3 bg-[#161b22] rounded-xl border border-gray-700">
-        <p>Controls: **Mouse/Touch** to steer | Current View Size: 800 x 600</p>
+        <p>Controls: **Mouse/Touch** to steer | **Click/Hold** to sprint | Sprint Cost: 4 Size/sec & drops food!</p>
+        <p class="mt-1 text-yellow-400 font-semibold">AI now predicts player's escape route and adjusts its pursuit or evasion!</p>
     </div>
 </div>
 
@@ -111,43 +131,74 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const minimapCanvas = document.getElementById('minimapCanvas');
 const minimapCtx = minimapCanvas.getContext('2d');
+const sprintBar = document.getElementById('sprint-bar');
+const canvasWrapper = document.getElementById('canvas-wrapper'); 
 
 const VIEW_SIZE = { width: 800, height: 600 };
 const WORLD_SIZE = 4000; 
-const MAX_FOOD = 400;    
 const MAX_AI_SNAKES = 30; 
 const SNAKE_RADIUS = 5;
-const FOOD_RADIUS = 2;
+
+// === SPEED & SPRINT CONFIGURATION ===
 const INITIAL_SPEED = 1.8; 
-const TURN_RATE = 0.06; 
+const SNAKE_SPEED_SPRINT_MULTIPLIER = 2.0; 
+const SPRINT_COST_PER_SECOND = 4; 
 const MIN_BODY_DISTANCE = SNAKE_RADIUS * 1.5; 
 
-// AI Tuned Parameters
-const LOOK_AHEAD_DISTANCE = 300; 
-const COLLISION_DANGER_RADIUS = SNAKE_RADIUS * 3.5; 
-const EDGE_AVOIDANCE_MARGIN = 150; 
-const FOOD_SEARCH_RADIUS_SQ = 700 * 700; 
-const HUNT_RADIUS_SQ = 750 * 750; 
-const PREDATOR_PREDICTION_DISTANCE = 150; 
-const GIVE_UP_TIME_FRAMES = 150; 
+// New Agility Constants
+const BASE_TURN_RATE = 0.08; 
+const AGILITY_FACTOR = 0.005; 
+const SPRINT_TURN_BOOST = 1.2; 
+
+// === FOOD CONFIGURATION ===
+const FOOD_TYPES = { REGULAR: 1, SUPER: 5, MEGA: 10 };
+const FOOD_COLORS = { 1: '#fef3c7', 5: '#f97316', 10: '#10b981' };
+const FOOD_RADII = { 1: 2, 5: 4, 10: 6 };
+const MAX_FOOD = 600; 
+
+// === EXPLOSIVE SNAKE CONFIGURATION ===
+const EXPLOSIVE_CHANCE = 0.02; // 2% chance for a snake to be explosive
+const EXPLOSION_FOOD_COUNT = 50;
+const EXPLOSION_RADIUS = 50;
+const EXPLOSION_MEGA_CHANCE = 0.05; 
+const EXPLOSION_SUPER_CHANCE = 0.25; 
+
+// === AI TUNING PARAMETERS ===
+const AI_SAFETY_MULTIPLIER = 100;
+const AI_LEADER_MULTIPLIER = 500000;
+const AI_MIN_AGGRESSION_SPRINT_SIZE = 1;
+const AI_AGGRESSION_INTERVAL = 30000; // 30 seconds
+const PROBE_DISTANCE = 1500; 
+const WALL_DANGER_MARGIN = 500; 
+const FOOD_ATTRACTION_MULTIPLIER = 5000000; 
+const COLLISION_PROJECTION_DISTANCE = 500; 
+const SPRINT_COLLISION_DISTANCE = 150; 
+const SELF_COLLISION_OFFSET = 10; 
+const AGGRESSION_PROXIMITY_DISTANCE = 300; 
+const AGGRESSION_DURATION_MS = 1000;  
+const SYMMETRY_BREAKING_SAFETY_THRESHOLD = 50; 
+
+// === NEW: PLAYER PREDICTION CONFIGURATION ===
+const AI_PREDICTION_TIME_UNITS = 300; // How far in game units the AI projects the player's movement
+const PLAYER_PREDICTION_PENALTY = 5000000; // Severe penalty for paths leading into player's prediction
+
+// AI Probe Configuration 
+const PROBE_COUNT = 11;
+const PROBE_ANGLES = [];
+const MAX_PROBE_ANGLE = Math.PI / 2;
+for (let i = 0; i < PROBE_COUNT; i++) {
+    const angle = -MAX_PROBE_ANGLE + (i / (PROBE_COUNT - 1)) * (2 * MAX_PROBE_ANGLE);
+    PROBE_ANGLES.push(angle);
+}
 
 // Minimap Parameters
-const MINIMAP_SIZE = 240; // Updated to match the new canvas size
+const MINIMAP_SIZE = 240; 
 const MINIMAP_SCALE = WORLD_SIZE / MINIMAP_SIZE;
-
-// Maximum angular difference allowed for a food target (135 degrees)
-const MAX_FOOD_ANGLE_DIFF = Math.PI * 0.75; 
-
-// Leader Indicator Parameters
 const ARROW_MARGIN = 30; 
 const ARROW_SIZE = 10;   
 
-// Kill Log Configuration
 const MAX_KILL_LOG = 5;
 let killLog = []; 
-
-// New constant for food redistribution interval (2 minutes in milliseconds)
-const FOOD_REDISTRIBUTION_INTERVAL = 120000; 
 
 let gameRunning = false;
 let cameraX = 0;
@@ -155,12 +206,13 @@ let cameraY = 0;
 let food = []; 
 let leaderSnake = null; 
 
-// Explicitly declare global game state variables
 let playerSnake;
 let snakes = [];
 let animationFrameId = null; 
 let lastTime = 0; 
-let foodRedistributionTimer = null; // Timer for food redistribution
+const targetFPS = 60;
+const frameDuration = 1000 / targetFPS;
+const SPRINT_COST_PER_FRAME = SPRINT_COST_PER_SECOND / targetFPS; 
 
 // Snake Class
 class Snake {
@@ -168,11 +220,16 @@ class Snake {
         this.id = id;
         this.name = name;
         this.color = color;
-        
         this.isPlayer = isPlayer;
         if (this.isPlayer) this.color = '#3b82f6'; 
 
         this.isDeadAndAwaitingReset = false; 
+        this.isKiller = false; 
+        this.killCount = 0;
+        this.isSprinting = false; 
+        this.lastAggressionTime = 0;
+        this.isAggressing = false;
+        this.isExplosive = Math.random() < EXPLOSIVE_CHANCE; 
         this.reset();
     }
 
@@ -184,14 +241,15 @@ class Snake {
         this.score = 0;
         this.isAlive = true;
         this.isRespawning = false; 
-        this.isKiller = false; 
-        
-        // +1 for clockwise (right), -1 for counter-clockwise (left), 0 for no avoidance in progress
-        this.avoidanceDirection = 0; 
-        this.tempWanderTimer = 0; // Timer to force non-hunting/pure avoidance behavior
+        this.isSprinting = false; 
+        this.growthSegments = 0; 
+        this.isExplosive = Math.random() < EXPLOSIVE_CHANCE; 
 
-        // --- STARTING POSITION LOGIC ---
-        const padding = 100; 
+        if (!this.isPlayer) {
+            this.lastAggressionTime = performance.now() + Math.random() * AI_AGGRESSION_INTERVAL;
+        }
+
+        const padding = WALL_DANGER_MARGIN + 100; 
         const range = WORLD_SIZE - 2 * padding;
         const startX = padding + Math.random() * range;
         const startY = padding + Math.random() * range;
@@ -206,23 +264,29 @@ class Snake {
         }
     }
 
-    // Adjust angle towards the target angle smoothly
     steer() {
         if (!this.isAlive) return;
 
         let diff = this.targetAngle - this.angle;
 
-        // Normalize difference to be between -PI and PI
         if (diff > Math.PI) diff -= 2 * Math.PI;
         if (diff < -Math.PI) diff += 2 * Math.PI;
+        
+        const size = this.getTotalSize();
+        const agility = 1.0 / (1.0 + size * AGILITY_FACTOR); 
+        
+        let effectiveTurnRate = BASE_TURN_RATE * agility; 
+        
+        if (this.isSprinting) {
+            effectiveTurnRate *= SPRINT_TURN_BOOST; 
+        }
 
-        if (Math.abs(diff) > TURN_RATE) {
-            this.angle += Math.sign(diff) * TURN_RATE;
+        if (Math.abs(diff) > effectiveTurnRate) {
+            this.angle += Math.sign(diff) * effectiveTurnRate;
         } else {
             this.angle = this.targetAngle;
         }
 
-        // Keep angle within 0 to 2*PI
         if (this.angle < 0) this.angle += 2 * Math.PI;
         if (this.angle >= 2 * Math.PI) this.angle -= 2 * Math.PI;
     }
@@ -233,44 +297,44 @@ class Snake {
         this.steer();
 
         const head = this.body[0];
+        
+        const currentSpeed = this.speed * (this.isSprinting ? SNAKE_SPEED_SPRINT_MULTIPLIER : 1);
 
-        // Calculate new head position based on angle and speed
-        const newX = head.x + Math.cos(this.angle) * this.speed;
-        const newY = head.y + Math.sin(this.angle) * this.speed;
+        const newX = head.x + Math.cos(this.angle) * currentSpeed;
+        const newY = head.y + Math.sin(this.angle) * currentSpeed;
 
-        // Add new head
         this.body.unshift({ x: newX, y: newY });
 
-        // Update score based on length (minus one for the head)
-        this.score = this.body.length - 1;
-
-        // Remove the tail only if we didn't grow
-        if (!this.growing) {
+        if (this.growthSegments <= 0) {
             this.body.pop();
+        } else {
+            this.growthSegments--; 
         }
-        this.growing = false; // Reset growing flag
     }
 
-    // Function called when food is eaten
-    grow() {
-        this.growing = true;
+    grow(amount = 1) {
+        this.growthSegments += amount; 
     }
-
-    // Set target angle for player control
+    
     setTargetAngle(newAngle) {
         this.targetAngle = newAngle;
     }
-}
-
-// Food Class (unchanged)
-class Food {
-    constructor(x, y) {
-        this.x = x;
-        this.y = y;
+    
+    getTotalSize() {
+        return (this.body.length - 1) + this.growthSegments;
     }
 }
 
-// --- Utilities ---
+// Food Class
+class Food {
+    constructor(x, y, type = FOOD_TYPES.REGULAR) {
+        this.x = x;
+        this.y = y;
+        this.type = type;
+    }
+}
+
+// --- Utilities (Names, Colors, Positions) ---
 const CONSONANTS = 'bdfghjklmnprstvwxz';
 const VOWELS = 'aeiou';
 
@@ -309,90 +373,102 @@ function initGame() {
     food = [];
     killLog = []; 
 
-    // 1. Create Player Snake
     playerSnake = new Snake(0, 'You', '#3b82f6', true); 
     snakes.push(playerSnake);
 
-    // 2. Create AI Snakes 
     for (let i = 1; i <= MAX_AI_SNAKES; i++) {
         const aiName = generateRandomCVCVName();
         const aiColor = getRandomColor();
         snakes.push(new Snake(i, aiName, aiColor, false));
     }
 
-    // 3. Create initial food 
     spawnFood();
 
-    // 4. Start the game loop
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
     lastTime = performance.now(); 
     animationFrameId = requestAnimationFrame(gameLoop); 
     gameRunning = true;
     document.getElementById('status-message').classList.add('hidden');
-    document.getElementById('player-score').textContent = playerSnake.score;
+    document.getElementById('player-score').textContent = playerSnake.getTotalSize().toFixed(0);
     canvas.onclick = null;
-    canvas.ontouchstart = null;
     updateKillLog(); 
-
-    // 5. Start the food redistribution timer
-    if (foodRedistributionTimer) clearInterval(foodRedistributionTimer);
-    foodRedistributionTimer = setInterval(redistributeFood, FOOD_REDISTRIBUTION_INTERVAL);
 }
 
 function spawnFood() {
     while (food.length < MAX_FOOD) {
-        food.push(new Food(getRandomWorldPos().x, getRandomWorldPos().y));
+        let type = FOOD_TYPES.REGULAR;
+        const roll = Math.random() * 100; 
+
+        if (roll < 2) { 
+            type = FOOD_TYPES.MEGA;
+        } else if (roll < 12) { 
+            type = FOOD_TYPES.SUPER;
+        }
+        
+        food.push(new Food(getRandomWorldPos().x, getRandomWorldPos().y, type));
     }
 }
 
-/**
- * Randomly changes the position of all uneaten food on the map.
- * This is called periodically by the timer set up in initGame.
- */
-function redistributeFood() {
-    console.log("Redistributing all uneaten food...");
-    for (const f of food) {
-        // Assign new random world coordinates
-        const newPos = getRandomWorldPos();
-        f.x = newPos.x;
-        f.y = newPos.y;
+function spawnExplosionFood(centerX, centerY) {
+    for (let i = 0; i < EXPLOSION_FOOD_COUNT; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.random() * EXPLOSION_RADIUS;
+        
+        const x = centerX + Math.cos(angle) * dist;
+        const y = centerY + Math.sin(angle) * dist;
+
+        let type = FOOD_TYPES.REGULAR;
+        const roll = Math.random();
+
+        if (roll < EXPLOSION_MEGA_CHANCE) {
+            type = FOOD_TYPES.MEGA;
+        } else if (roll < EXPLOSION_SUPER_CHANCE) {
+            type = FOOD_TYPES.SUPER;
+        }
+        
+        food.push(new Food(x, y, type));
     }
 }
 
 
-// --- Drawing (Main Canvas) ---
+// --- Drawing ---
 function draw() {
-    // 1. Calculate Camera Offset
     if (playerSnake.isAlive && playerSnake.body.length > 0) {
         cameraX = playerSnake.body[0].x - VIEW_SIZE.width / 2;
         cameraY = playerSnake.body[0].y - VIEW_SIZE.height / 2;
     }
 
-    // 2. Clear canvas (Draw background)
     ctx.fillStyle = '#161b22';
     ctx.fillRect(0, 0, VIEW_SIZE.width, VIEW_SIZE.height);
 
-    // Draw World Boundary 
     ctx.strokeStyle = '#30363d';
     ctx.lineWidth = 10;
     ctx.strokeRect(-cameraX, -cameraY, WORLD_SIZE, WORLD_SIZE);
     ctx.lineWidth = 1; 
+    
+    if (playerSnake.isSprinting) {
+        canvasWrapper.classList.add('sprinting-glow');
+    } else {
+        canvasWrapper.classList.remove('sprinting-glow');
+    }
 
-    // 3. Draw Food
-    ctx.fillStyle = '#fef3c7'; 
+    // Draw Food
     for (const f of food) {
         const drawX = f.x - cameraX;
         const drawY = f.y - cameraY;
+        const radius = FOOD_RADII[f.type];
+        const color = FOOD_COLORS[f.type];
 
-        if (drawX > -FOOD_RADIUS && drawX < VIEW_SIZE.width + FOOD_RADIUS &&
-            drawY > -FOOD_RADIUS && drawY < VIEW_SIZE.height + FOOD_RADIUS) {
+        if (drawX > -radius && drawX < VIEW_SIZE.width + radius &&
+            drawY > -radius && drawY < VIEW_SIZE.height + radius) {
+            ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(drawX, drawY, FOOD_RADIUS, 0, Math.PI * 2);
+            ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
             ctx.fill();
         }
     }
 
-    // 4. Draw Snakes
+    // Draw Snakes
     for (const snake of snakes) {
         if (!snake.isAlive) continue;
 
@@ -401,126 +477,139 @@ function draw() {
             const segment = snake.body[i];
             const drawX = segment.x - cameraX;
             const drawY = segment.y - cameraY;
-
-            if (drawX > -SNAKE_RADIUS && drawX < VIEW_SIZE.width + SNAKE_RADIUS &&
-                drawY > -SNAKE_RADIUS && drawY < VIEW_SIZE.height + SNAKE_RADIUS) {
-                ctx.beginPath();
-                ctx.arc(drawX, drawY, SNAKE_RADIUS, 0, Math.PI * 2);
-                ctx.fill();
+            
+            ctx.beginPath();
+            ctx.arc(drawX, drawY, SNAKE_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+            
+            if (i === 0) {
+                // Sprinting glow on head
+                if (snake.isSprinting) {
+                    ctx.fillStyle = '#ffffff'; 
+                    ctx.beginPath();
+                    ctx.arc(drawX, drawY, SNAKE_RADIUS / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                // Explosive marker on head
+                if (snake.isExplosive) {
+                    ctx.strokeStyle = '#ffb703';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(drawX, drawY, SNAKE_RADIUS + 3, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
             }
         }
 
-        // Draw name above the head
+        // Draw name and kill count
         if (snake.body.length > 0) {
             const head = snake.body[0];
             const drawX = head.x - cameraX;
             const drawY = head.y - cameraY;
+            
             ctx.fillStyle = snake.isPlayer ? '#3b82f6' : '#ffffff';
             ctx.font = 'bold 14px Inter';
             ctx.textAlign = 'center';
             ctx.fillText(snake.name, drawX, drawY - SNAKE_RADIUS - 5);
+            
+            let label = `(${snake.getTotalSize().toFixed(0)})`;
+            let labelY = drawY - SNAKE_RADIUS - 22;
+
+            if (snake.killCount > 0) {
+                label = `KILLS: ${snake.killCount}`;
+                ctx.fillStyle = snake.isPlayer ? '#3b82f6' : '#f87171';
+            } else {
+                ctx.fillStyle = '#9ca3af'; 
+            }
+            
+            ctx.font = 'bold 12px Inter';
+            ctx.fillText(label, drawX, labelY);
         }
     }
 
-    // 5. Draw Leader Indicator
+    // Draw Leader Indicator
     if (leaderSnake && leaderSnake.isAlive && leaderSnake.id !== playerSnake.id && playerSnake.body.length > 0 && leaderSnake.body.length > 0) {
         const leaderHead = leaderSnake.body[0];
         const playerHead = playerSnake.body[0];
-        
         const drawX = leaderHead.x - cameraX;
         const drawY = leaderHead.y - cameraY;
-        
         const margin = 50;
         const isVisible = (drawX > -margin && drawX < VIEW_SIZE.width + margin &&
                            drawY > -margin && drawY < VIEW_SIZE.height + margin);
 
         ctx.save();
-
         if (isVisible) {
-            // --- ON-SCREEN STAR INDICATOR ---
             ctx.translate(drawX, drawY);
-
             const flashOpacity = Math.abs(Math.sin(performance.now() / 300));
-
-            // Outer ring (pulsing)
             ctx.beginPath();
             ctx.strokeStyle = `rgba(255, 255, 0, ${0.5 + flashOpacity * 0.5})`;
             ctx.lineWidth = 3;
             ctx.arc(0, 0, SNAKE_RADIUS + 8, 0, Math.PI * 2);
             ctx.stroke();
-
-            // Inner pointer/star
             ctx.fillStyle = '#ffeb3b'; 
             ctx.font = '20px Arial';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('★', 0, 0); 
-            
         } else {
-            // --- OFF-SCREEN ARROW INDICATOR ---
-            
             const dx = leaderHead.x - playerHead.x;
             const dy = leaderHead.y - playerHead.y;
             const arrowAngle = Math.atan2(dy, dx);
-            
             const center_x = VIEW_SIZE.width / 2;
             const center_y = VIEW_SIZE.height / 2;
-
             const maxRadius = Math.min(center_x, center_y);
             const arrowRadius = maxRadius - ARROW_MARGIN;
-
             const arrowX = center_x + Math.cos(arrowAngle) * arrowRadius;
             const arrowY = center_y + Math.sin(arrowAngle) * arrowRadius;
-
             ctx.translate(arrowX, arrowY);
             ctx.rotate(arrowAngle);
-            
             ctx.fillStyle = '#ffeb3b';
             ctx.strokeStyle = '#000000';
             ctx.lineWidth = 2;
-            
             ctx.beginPath();
-            ctx.moveTo(ARROW_SIZE, 0); // Tip
-            ctx.lineTo(-ARROW_SIZE / 2, -ARROW_SIZE); // Bottom left
-            ctx.lineTo(-ARROW_SIZE / 2, ARROW_SIZE); // Bottom right
+            ctx.moveTo(ARROW_SIZE, 0); 
+            ctx.lineTo(-ARROW_SIZE / 2, -ARROW_SIZE); 
+            ctx.lineTo(-ARROW_SIZE / 2, ARROW_SIZE); 
             ctx.closePath();
             ctx.fill();
             ctx.stroke();
         }
-
         ctx.restore();
     }
     
-    // Draw the minimap after the main canvas is done
+    if (playerSnake.isAlive) {
+        sprintBar.parentElement.classList.remove('hidden');
+        let sprintLevel = Math.max(0, playerSnake.getTotalSize() - 1) / 50;
+        sprintLevel = Math.min(1, sprintLevel); 
+        sprintBar.style.width = `${sprintLevel * 100}%`;
+        sprintBar.style.backgroundColor = playerSnake.isSprinting ? '#f87171' : '#10b981';
+    } else {
+        sprintBar.parentElement.classList.add('hidden');
+    }
+
     drawMinimap(); 
 }
 
-// --- Minimap Drawing ---
 function drawMinimap() {
     minimapCtx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
-    
-    // Draw World Boundary
     minimapCtx.strokeStyle = '#30363d';
     minimapCtx.lineWidth = 2;
     minimapCtx.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
     
-    // Get top 3 snakes for highlighting
     const sortedSnakes = snakes
         .filter(s => s.isAlive)
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => b.getTotalSize() - a.getTotalSize());
 
     const topSnakes = sortedSnakes.slice(0, 3);
     
-    // 1. Draw Food Density
-    minimapCtx.fillStyle = 'rgba(254, 243, 199, 0.5)'; // Light yellow, semi-transparent
     for (const f of food) {
-        // Scale down food coordinates
         const mapX = f.x / MINIMAP_SCALE;
         const mapY = f.y / MINIMAP_SCALE;
-        minimapCtx.fillRect(mapX, mapY, 1, 1);
+        minimapCtx.fillStyle = FOOD_COLORS[f.type];
+        minimapCtx.fillRect(mapX, mapY, FOOD_RADII[f.type] / 3, FOOD_RADII[f.type] / 3);
     }
 
-    // 2. Draw Snakes (Heads only)
     for (const snake of snakes) {
         if (!snake.isAlive || snake.body.length === 0) continue;
 
@@ -532,10 +621,10 @@ function drawMinimap() {
         let drawRadius = 2;
 
         if (snake.isPlayer) {
-            drawColor = '#3b82f6'; // Bright blue for player
+            drawColor = '#3b82f6'; 
             drawRadius = 3;
         } else if (topSnakes.includes(snake)) {
-            drawColor = '#ffeb3b'; // Yellow for top 3
+            drawColor = '#ffeb3b'; 
             drawRadius = 3;
         }
 
@@ -543,15 +632,22 @@ function drawMinimap() {
         minimapCtx.beginPath();
         minimapCtx.arc(mapX, mapY, drawRadius, 0, Math.PI * 2);
         minimapCtx.fill();
+        
+        // Explosive marker on minimap
+        if (snake.isExplosive) {
+            minimapCtx.strokeStyle = '#ffb703';
+            minimapCtx.lineWidth = 1;
+            minimapCtx.beginPath();
+            minimapCtx.arc(mapX, mapY, drawRadius + 1, 0, Math.PI * 2); 
+            minimapCtx.stroke();
+        }
     }
     
-    // 3. Highlight Player Position (Always on top for clarity)
     if (playerSnake && playerSnake.isAlive && playerSnake.body.length > 0) {
         const head = playerSnake.body[0];
         const mapX = head.x / MINIMAP_SCALE;
         const mapY = head.y / MINIMAP_SCALE;
 
-        // Draw a prominent white ring around the player's blue head for visibility
         minimapCtx.strokeStyle = '#ffffff'; 
         minimapCtx.lineWidth = 1.5;
         minimapCtx.beginPath();
@@ -561,176 +657,350 @@ function drawMinimap() {
 }
 
 
-// --- AI Logic (Updated with Predator Kill Strategy and Give-Up Logic) ---
-function runAISnake(snake) {
-    if (!snake.isAlive) return;
+// --- AI Logic Utilities ---
 
-    const head = snake.body[0];
-    let targetAngle = snake.angle;
-    let avoidanceRequired = false; 
-    let obstaclePos = null; 
+function getLeaderSnake() {
+    return snakes
+        .filter(s => s.isAlive)
+        .sort((a, b) => b.getTotalSize() - a.getTotalSize())[0] || playerSnake; 
+}
+
+
+// Function to calculate the penalty if the AI's probe path intersects the player's predicted movement
+function getPlayerPredictionPenalty(aiSnake, probeAngle) {
+    // Only check against the human player snake
+    const targetSnake = playerSnake;
     
-    // Calculate the point the snake will reach soon, based on the LOOK_AHEAD_DISTANCE
-    const lookAheadX = head.x + Math.cos(snake.angle) * LOOK_AHEAD_DISTANCE;
-    const lookAheadY = head.y + Math.sin(snake.angle) * LOOK_AHEAD_DISTANCE;
+    if (!targetSnake || !targetSnake.isAlive || targetSnake.id === aiSnake.id) return 0;
+    
+    const aiHead = aiSnake.body[0];
+    const playerHead = targetSnake.body[0];
+
+    // If the player is too far, ignore prediction
+    const dx = aiHead.x - playerHead.x;
+    const dy = aiHead.y - playerHead.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    // Only engage prediction logic if within moderate proximity
+    if (distance > AGGRESSION_PROXIMITY_DISTANCE * 2) return 0;
+
+    const timeSteps = 10;
+    const totalTimeUnits = AI_PREDICTION_TIME_UNITS;
+    let penalty = 0;
+
+    // Simulate player's movement over stepTime increments
+    let predictedPlayerHead = { x: playerHead.x, y: playerHead.y };
+    let playerAngle = targetSnake.angle;
+
+    for (let i = 0; i < timeSteps; i++) {
+        // Calculate player's effective turn rate for this step (based on size)
+        const size = targetSnake.getTotalSize();
+        const agility = 1.0 / (1.0 + size * AGILITY_FACTOR); 
+        let effectiveTurnRate = BASE_TURN_RATE * agility; 
+        if (targetSnake.isSprinting) effectiveTurnRate *= SPRINT_TURN_BOOST; 
+
+        // Player steering simulation
+        let diff = targetSnake.targetAngle - playerAngle;
+        if (diff > Math.PI) diff -= 2 * Math.PI;
+        if (diff < -Math.PI) diff += 2 * Math.PI;
+
+        // Apply turn rate for the time slice
+        if (Math.abs(diff) > effectiveTurnRate) {
+            playerAngle += Math.sign(diff) * effectiveTurnRate;
+        } else {
+            playerAngle = targetSnake.targetAngle;
+        }
+        
+        // Calculate movement distance for this step (total prediction distance divided by steps)
+        const currentSpeed = targetSnake.speed * (targetSnake.isSprinting ? SNAKE_SPEED_SPRINT_MULTIPLIER : 1);
+        const stepDistance = (currentSpeed * (totalTimeUnits / currentSpeed)) / timeSteps; 
+
+        // Player movement simulation
+        predictedPlayerHead.x += Math.cos(playerAngle) * stepDistance;
+        predictedPlayerHead.y += Math.sin(playerAngle) * stepDistance;
+
+        // Check if the AI's probe path intersects this predicted player position
+        const aiDx = Math.cos(probeAngle);
+        const aiDy = Math.sin(probeAngle);
+
+        const V_hx = predictedPlayerHead.x - aiHead.x;
+        const V_hy = predictedPlayerHead.y - aiHead.y;
+        const projectionDist = V_hx * aiDx + V_hy * aiDy;
+
+        if (projectionDist > 0 && projectionDist < PROBE_DISTANCE) {
+            const distToLineSq = (V_hx * V_hx + V_hy * V_hy) - (projectionDist * projectionDist);
+            const perpendicularDist = Math.sqrt(Math.max(0, distToLineSq));
+            
+            const collisionRadius = SNAKE_RADIUS * 3; // Larger safety margin for prediction
+            if (perpendicularDist < collisionRadius) {
+                // Apply severe penalty, inversely proportional to the AI's distance to the collision point
+                penalty -= PLAYER_PREDICTION_PENALTY / projectionDist; 
+            }
+        }
+    }
+    return penalty;
+}
 
 
-    // --- 0. CRITICAL BOUNDARY AVOIDANCE (Highest Priority) ---
-    const halfWorld = WORLD_SIZE / 2;
-    if (head.x < EDGE_AVOIDANCE_MARGIN || head.x > WORLD_SIZE - EDGE_AVOIDANCE_MARGIN || 
-        head.y < EDGE_AVOIDANCE_MARGIN || head.y > WORLD_SIZE - EDGE_AVOIDANCE_MARGIN) {
-        
-        const dxCenter = halfWorld - head.x;
-        const dyCenter = halfWorld - head.y;
-        targetAngle = Math.atan2(dyCenter, dxCenter);
-        targetAngle += (Math.random() - 0.5) * 0.2; 
-        
-        snake.targetAngle = targetAngle;
-        snake.avoidanceDirection = 0; 
-        snake.tempWanderTimer = 0; 
-        return; 
+// Reused: Generic collision check used by AI for safety
+function isHeadOnCollisionCourse(snake, projectionDistance = COLLISION_PROJECTION_DISTANCE) {
+    const head = snake.body[0];
+    const dx = Math.cos(snake.angle);
+    const dy = Math.sin(snake.angle);
+    
+    const predictedX = head.x + dx * projectionDistance;
+    const predictedY = head.y + dy * projectionDistance;
+    
+    if (predictedX < WALL_DANGER_MARGIN || predictedX > WORLD_SIZE - WALL_DANGER_MARGIN ||
+        predictedY < WALL_DANGER_MARGIN || predictedY > WORLD_SIZE - WALL_DANGER_MARGIN) {
+        return true; 
     }
 
-    // --- 1. COLLISION CHECK (Check Look-Ahead Point against ALL snake bodies) ---
     for (const s of snakes) {
         if (!s.isAlive) continue; 
         
-        const startSegment = (s.id === snake.id) ? 4 : 0;
+        const startSegment = (s.id === snake.id) ? SELF_COLLISION_OFFSET : 0; 
+        
+        for (let i = startSegment; i < s.body.length; i++) {
+            const segment = s.body[i];
+            
+            const V_hx = segment.x - head.x;
+            const V_hy = segment.y - head.y;
+            
+            const projectionDist = V_hx * dx + V_hy * dy;
+
+            if (projectionDist > 0 && projectionDist < projectionDistance) {
+                const distToLineSq = (V_hx * V_hx + V_hy * V_hy) - (projectionDist * projectionDist);
+                const perpendicularDist = Math.sqrt(Math.max(0, distToLineSq));
+                
+                const collisionRadius = SNAKE_RADIUS * 2;
+                if (perpendicularDist < collisionRadius) {
+                    return true; 
+                }
+            }
+        }
+    }
+    return false;
+}
+
+function getSafetyScore(snake, probeAngle) {
+    const head = snake.body[0];
+    const dx = Math.cos(probeAngle);
+    const dy = Math.sin(probeAngle);
+    let minClearance = PROBE_DISTANCE; 
+    const minSafeDist = SNAKE_RADIUS * 2; 
+
+    let shortestWallDist = PROBE_DISTANCE;
+    
+    if (dx > 0) shortestWallDist = Math.min(shortestWallDist, (WORLD_SIZE - WALL_DANGER_MARGIN - head.x) / dx);
+    if (dx < 0) shortestWallDist = Math.min(shortestWallDist, (head.x - WALL_DANGER_MARGIN) / -dx);
+    if (dy > 0) shortestWallDist = Math.min(shortestWallDist, (WORLD_SIZE - WALL_DANGER_MARGIN - head.y) / dy);
+    if (dy < 0) shortestWallDist = Math.min(shortestWallDist, (head.y - WALL_DANGER_MARGIN) / -dy);
+    
+    minClearance = Math.min(minClearance, shortestWallDist);
+
+    for (const s of snakes) {
+        if (!s.isAlive) continue; 
+        
+        const startSegment = (s.id === snake.id) ? SELF_COLLISION_OFFSET : 0; 
         
         for (let i = startSegment; i < s.body.length; i++) { 
             const segment = s.body[i];
             
-            const dx = lookAheadX - segment.x;
-            const dy = lookAheadY - segment.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
+            const V_hx = segment.x - head.x;
+            const V_hy = segment.y - head.y;
+            const projectionDist = V_hx * dx + V_hy * dy;
 
-            if (distance < COLLISION_DANGER_RADIUS) {
-                avoidanceRequired = true;
-                obstaclePos = segment; 
-                break;
+            if (projectionDist > 0 && projectionDist < PROBE_DISTANCE) {
+                const distToLineSq = (V_hx * V_hx + V_hy * V_hy) - (projectionDist * projectionDist);
+                const perpendicularDist = Math.sqrt(Math.max(0, distToLineSq));
+                
+                if (perpendicularDist < minSafeDist) {
+                    minClearance = Math.min(minClearance, projectionDist - minSafeDist);
+                }
             }
         }
-        if (avoidanceRequired) break;
+    }
+    
+    return minClearance; 
+}
+
+function getFoodUtilityScore(snake, probeAngle) {
+    const head = snake.body[0];
+    let score = 0;
+    
+    for (const f of food) {
+        const dxFood = f.x - head.x;
+        const dyFood = f.y - head.y;
+        const distSq = dxFood * dxFood + dyFood * dyFood;
+        const distance = Math.sqrt(distSq);
+
+        if (distance < PROBE_DISTANCE) {
+            const angleToFood = Math.atan2(dyFood, dxFood);
+            let angleDiff = angleToFood - probeAngle;
+            if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+            if (Math.abs(angleDiff) < Math.PI / 4) { 
+                
+                let utility = f.type * (FOOD_ATTRACTION_MULTIPLIER / distSq); 
+                
+                if (distance < 50 && Math.abs(angleDiff) < Math.PI / 18) {
+                    utility *= 5; 
+                }
+                
+                score += utility; 
+            }
+        }
+    }
+    
+    return score;
+}
+
+function getLeaderUtilityScore(snake, probeAngle, leaderSnake) {
+    if (!leaderSnake || !leaderSnake.isAlive || leaderSnake.id === snake.id || AI_LEADER_MULTIPLIER === 0) return 0;
+    
+    const head = snake.body[0];
+    const leaderHead = leaderSnake.body[0];
+
+    const dxLeader = leaderHead.x - head.x;
+    const dyLeader = leaderHead.y - head.y;
+    const distSq = dxLeader * dxLeader + dyLeader * dyLeader;
+    const distance = Math.sqrt(distSq);
+
+    if (distance > AGGRESSION_PROXIMITY_DISTANCE) return 0;
+
+    const angleToLeader = Math.atan2(dyLeader, dxLeader);
+    let angleDiff = angleToLeader - probeAngle;
+    if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+    if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+    if (Math.abs(angleDiff) < Math.PI / 3) { 
+        const angleFactor = 1 - (Math.abs(angleDiff) / (Math.PI / 3));
+        return angleFactor * (AI_LEADER_MULTIPLIER / distSq);
+    }
+    
+    return 0;
+}
+
+
+// --- Main AI Logic ---
+function runAISnake(snake) {
+    if (!snake.isAlive) return;
+
+    leaderSnake = getLeaderSnake();
+    const currentSize = snake.getTotalSize();
+    
+    let probeResults = [];
+    const currentTime = performance.now();
+
+    // 1. AGGRESSION TIMING LOGIC
+    let isNearLeader = false;
+    if (leaderSnake.isAlive && leaderSnake.id !== snake.id && AI_LEADER_MULTIPLIER > 0) {
+        const head = snake.body[0];
+        const leaderHead = leaderSnake.body[0];
+        const dx = head.x - leaderHead.x;
+        const dy = head.y - leaderHead.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        isNearLeader = distance < AGGRESSION_PROXIMITY_DISTANCE;
+    }
+
+    if (isNearLeader) {
+        if (snake.isAggressing) {
+            if (currentTime - snake.lastAggressionTime >= AGGRESSION_DURATION_MS) {
+                snake.isAggressing = false;
+                snake.lastAggressionTime = currentTime; 
+            }
+        } else {
+            if (currentTime - snake.lastAggressionTime >= AI_AGGRESSION_INTERVAL) {
+                snake.isAggressing = true;
+                snake.lastAggressionTime = currentTime; 
+            }
+        }
+    } else {
+        snake.isAggressing = false; 
     }
 
 
-    // --- 2. ACTION ---
-    if (avoidanceRequired && obstaclePos) {
-        // --- AVOIDANCE MANEUVER (PRIORITIZED OVER HUNTING, TRIGGERING 'GIVE UP') ---
+    // 2. PATH EVALUATION
+    for (const relativeAngle of PROBE_ANGLES) {
+        const probeAngle = snake.angle + relativeAngle;
+        const normalizedAngle = (probeAngle % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+        const safetyScore = getSafetyScore(snake, normalizedAngle); 
+        const foodUtility = getFoodUtilityScore(snake, normalizedAngle);
+        const leaderUtility = getLeaderUtilityScore(snake, normalizedAngle, leaderSnake); 
         
-        snake.tempWanderTimer = GIVE_UP_TIME_FRAMES; 
-        
-        if (snake.avoidanceDirection === 0) {
-            snake.avoidanceDirection = Math.random() < 0.5 ? 1 : -1;
+        // NEW: Player prediction penalty
+        const predictionPenalty = getPlayerPredictionPenalty(snake, normalizedAngle);
+
+        probeResults.push({
+            angle: normalizedAngle,
+            safety: safetyScore,
+            foodUtility: foodUtility,
+            leaderUtility: leaderUtility,
+            predictionPenalty: predictionPenalty,
+        });
+    }
+    
+    let chosenAngle = snake.angle;
+    let finalSprintDecision = false;
+    
+    const isCollisionImminent = isHeadOnCollisionCourse(snake, SPRINT_COLLISION_DISTANCE);
+
+    // 3. ANGLE SELECTION PRIORITY
+    if (isCollisionImminent) {
+        // PRIORITY 1: EVASION OVERRIDE 
+        let bestSafetyScore = -Infinity;
+        let candidateAngles = [];
+
+        for (const result of probeResults) {
+            if (result.safety > bestSafetyScore) {
+                bestSafetyScore = result.safety;
+                candidateAngles = [result.angle];
+            } 
+            else if (result.safety >= bestSafetyScore - SYMMETRY_BREAKING_SAFETY_THRESHOLD) { 
+                candidateAngles.push(result.angle);
+            }
         }
 
-        const dx = obstaclePos.x - head.x;
-        const dy = obstaclePos.y - head.y;
-        const angleToObstacle = Math.atan2(dy, dx);
-
-        // Turn perpendicular to the obstacle angle
-        targetAngle = angleToObstacle + snake.avoidanceDirection * Math.PI * 0.5; 
+        if (candidateAngles.length > 0) {
+            chosenAngle = candidateAngles[Math.floor(Math.random() * candidateAngles.length)];
+        }
+        
+        finalSprintDecision = true; 
         
     } else {
-        // --- PREDATOR MODE / FOOD SEEKING ---
-        snake.avoidanceDirection = 0; 
+        // PRIORITY 2: NORMAL HUNTING - Balance utility, safety, and *player prediction*
         
-        if (snake.tempWanderTimer > 0) {
-            snake.tempWanderTimer--;
+        let bestFinalScore = -Infinity;
+        
+        for (const result of probeResults) {
+            const finalScore = result.foodUtility + 
+                               (result.safety * AI_SAFETY_MULTIPLIER) + 
+                               result.leaderUtility +
+                               result.predictionPenalty; // Incorporate player prediction penalty
+            
+            if (finalScore > bestFinalScore) {
+                bestFinalScore = finalScore;
+                chosenAngle = result.angle;
+            }
         }
-
-        let hunting = false;
         
-        if (snake.tempWanderTimer === 0) {
-            const topSnakes = snakes
-                .filter(s => s.isAlive && s.id !== snake.id)
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 3); 
-                
-            if (topSnakes.length > 0) {
-                const huntTarget = topSnakes[Math.floor(Math.random() * topSnakes.length)];
-                
-                const huntTargetHead = huntTarget.body[0];
-                
-                const dxLeader = huntTargetHead.x - head.x;
-                const dyLeader = huntTargetHead.y - head.y;
-                const distSqLeader = dxLeader * dxLeader + dyLeader * dyLeader;
-    
-                if (distSqLeader < HUNT_RADIUS_SQ) {
-                    // We are hunting!
-                    
-                    // --- PREDATOR KILL LOGIC ---
-                    const leaderAngle = huntTarget.angle;
-    
-                    const predictedX = huntTargetHead.x + Math.cos(leaderAngle) * PREDATOR_PREDICTION_DISTANCE;
-                    const predictedY = huntTargetHead.y + Math.sin(leaderAngle) * PREDATOR_PREDICTION_DISTANCE;
-    
-                    const dxPredicted = predictedX - head.x;
-                    const dyPredicted = predictedY - head.y;
-                    
-                    targetAngle = Math.atan2(dyPredicted, dxPredicted);
-                    targetAngle += (Math.random() - 0.5) * 0.05; 
-                    
-                    hunting = true;
-                }
-            }
-        } 
-
-        if (!hunting) {
-            // --- HIGH-PRIORITY FOOD SEEKING / WANDERING ---
-            
-            let minDistanceSq = Infinity;
-            let nearestFood = null;
-
-            // Find the nearest food item within the search radius
-            for (const f of food) {
-                const dx = f.x - head.x;
-                const dy = f.y - head.y;
-                const distSq = dx * dx + dy * dy;
-
-                if (distSq < minDistanceSq && distSq < FOOD_SEARCH_RADIUS_SQ) {
-                    minDistanceSq = distSq;
-                    nearestFood = f;
-                }
-            }
-            
-            if (nearestFood) {
-                const dx = nearestFood.x - head.x;
-                const dy = nearestFood.y - head.y;
-                targetAngle = Math.atan2(dy, dx);
-                
-                let angleDiff = targetAngle - snake.angle;
-                if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-                if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-                
-                if (Math.abs(angleDiff) > MAX_FOOD_ANGLE_DIFF) {
-                    nearestFood = null; 
-                }
-            }
-
-            // Execute Seeking/Wandering
-            if (nearestFood) {
-                targetAngle += (Math.random() - 0.5) * 0.05; 
-            } else {
-                // No viable food found or hunting is temporarily disabled, wander towards the center
-                const dxCenter = halfWorld - head.x;
-                const dyCenter = halfWorld - head.y;
-                targetAngle = Math.atan2(dyCenter, dxCenter);
-                targetAngle += (Math.random() - 0.5) * 0.1;
-            }
+        // Aggression Sprint (If not escaping, sprint only for aggression and if big enough)
+        if (snake.isAggressing && currentSize >= AI_MIN_AGGRESSION_SPRINT_SIZE) {
+            finalSprintDecision = true;
         }
     }
+    
+    // 4. APPLY DECISION
+    if (finalSprintDecision && currentSize > 1) {
+        snake.isSprinting = true;
+    } else {
+        snake.isSprinting = false; 
+    }
 
-    // Set the calculated target angle
-    snake.targetAngle = targetAngle;
+    snake.targetAngle = chosenAngle;
 }
 
-// Function to find the top scoring snake
-function getLeaderSnake() {
-    return snakes
-        .filter(s => s.isAlive)
-        .sort((a, b) => b.score - a.score)[0] || playerSnake; 
-}
 
 // --- Player Respawn Logic ---
 function respawnPlayer() {
@@ -740,8 +1010,14 @@ function respawnPlayer() {
     playerSnake.isAlive = false; 
 
     if (playerSnake.body.length > 0) {
-        // Drop food upon death
-        playerSnake.body.forEach(segment => food.push(new Food(segment.x, segment.y)));
+        const head = playerSnake.body[0];
+        
+        if (playerSnake.isExplosive) {
+            spawnExplosionFood(head.x, head.y);
+        } else {
+            playerSnake.body.forEach(segment => food.push(new Food(segment.x, segment.y, FOOD_TYPES.REGULAR)));
+        }
+        
         playerSnake.body = []; 
     }
 
@@ -758,7 +1034,6 @@ function respawnPlayer() {
 
 // --- Collision and Update Logic ---
 function update() {
-    // Find the leader at the start of the update cycle for AI and drawing
     leaderSnake = getLeaderSnake(); 
 
     snakes.forEach(snake => {
@@ -767,41 +1042,81 @@ function update() {
                 respawnPlayer();
             } else if (!snake.isPlayer && !snake.isDeadAndAwaitingReset) {
                 snake.isDeadAndAwaitingReset = true;
-                snake.body.forEach(segment => food.push(new Food(segment.x, segment.y)));
+                
+                if (snake.body.length > 0) {
+                    const head = snake.body[0];
+                    if (snake.isExplosive) {
+                        spawnExplosionFood(head.x, head.y);
+                    } else {
+                        snake.body.forEach(segment => food.push(new Food(segment.x, segment.y, FOOD_TYPES.REGULAR)));
+                    }
+                }
+                snake.body = []; 
+                
                 setTimeout(() => {
-                    snake.reset();
+                    snake.reset(); 
                     snake.isDeadAndAwaitingReset = false;
                 }, 5000);
             }
             return; 
         }
         
-        // 1. Run AI logic for non-player snakes
         if (!snake.isPlayer) {
             runAISnake(snake);
         }
 
-        // 2. Move
+        const currentSize = snake.getTotalSize();
+
+        if (snake.isSprinting) {
+            
+            if (currentSize <= 1) {
+                snake.isSprinting = false; 
+            } else {
+                let costRemaining = SPRINT_COST_PER_FRAME;
+                
+                if (snake.growthSegments >= costRemaining) {
+                    snake.growthSegments -= costRemaining;
+                    costRemaining = 0;
+                } else {
+                    costRemaining -= snake.growthSegments;
+                    snake.growthSegments = 0;
+                }
+                
+                if (costRemaining > 0) {
+                    let segmentsToLose = Math.floor(costRemaining);
+                    
+                    if (snake.body.length - 1 > segmentsToLose) { 
+                        for (let i = 0; i < segmentsToLose; i++) {
+                            const lostSegment = snake.body.pop();
+                            if (lostSegment) {
+                                food.push(new Food(lostSegment.x, lostSegment.y, FOOD_TYPES.REGULAR));
+                            }
+                        }
+                        snake.growthSegments -= (costRemaining - segmentsToLose); 
+                    } else {
+                        snake.isSprinting = false; 
+                    }
+                }
+            }
+        }
+        
         snake.move();
+        snake.score = snake.getTotalSize(); 
         const head = snake.body[0];
 
-        // 3. World Boundary Check
-        const isOutOfBounds = head.x < 0 || head.x > WORLD_SIZE ||
-                              head.y < 0 || head.y > WORLD_SIZE;
-
+        const isOutOfBounds = head.x < 0 || head.x > WORLD_SIZE || head.y < 0 || head.y > WORLD_SIZE;
         if (isOutOfBounds) {
             snake.isAlive = false;
             return; 
         }
 
-        // 4. Collision with other snakes' bodies
         let hitSnake = false;
         for (const s of snakes) {
             if (s.id === snake.id || !s.isAlive) continue; 
 
             const otherHead = s.body[0];
 
-            // 4a. Check for Head-to-Head Collision (Mutual Death)
+            // Head-to-Head Collision
             const dxHead = head.x - otherHead.x;
             const dyHead = head.y - otherHead.y;
             const distanceSqHead = dxHead * dxHead + dyHead * dyHead;
@@ -813,7 +1128,7 @@ function update() {
                 break;
             }
 
-            // 4b. Check for Head-to-Body Collision (Current snake dies)
+            // Head-to-Body Collision
             for (let i = 1; i < s.body.length; i++) { 
                 const segment = s.body[i];
                 const dx = head.x - segment.x;
@@ -821,53 +1136,50 @@ function update() {
                 const distanceSq = dx * dx + dy * dy;
 
                 if (distanceSq < (SNAKE_RADIUS * 2) ** 2) {
-                    snake.isAlive = false; 
+                    const victimSnake = snake;
+                    const killerSnake = s;
+                    
+                    victimSnake.isAlive = false; 
                     hitSnake = true;
                     
-                    if (s.isAlive) { 
-                        const killerName = s.name;
-                        const victimName = snake.name;
+                    if (killerSnake.isAlive) { 
+                        killerSnake.killCount++;
                         
-                        killLog.unshift({ killer: killerName, victim: victimName });
+                        // Add killer's glow
+                        killerSnake.isKiller = true;
+                        setTimeout(() => { 
+                            if(killerSnake) killerSnake.isKiller = false;
+                            updateLeaderboard(); 
+                        }, 1000);
                         
+                        killLog.unshift({ killer: killerSnake.name, victim: victimSnake.name, isExplosive: victimSnake.isExplosive });
                         if (killLog.length > MAX_KILL_LOG) {
                             killLog.pop();
                         }
                         updateKillLog(); 
-
-                        s.isKiller = true;
-                        setTimeout(() => { 
-                            if(s) s.isKiller = false;
-                            updateLeaderboard(); 
-                        }, 1000);
                     }
-
                     break;
                 }
             }
             if (hitSnake) break;
         }
+        if (hitSnake) return; 
 
-        if (hitSnake) {
-            return; 
-        }
-
-        // 5. Food Eating
+        // Food Eating
         for (let i = food.length - 1; i >= 0; i--) {
             const f = food[i];
             const dx = head.x - f.x;
             const dy = head.y - f.y;
             const distanceSq = dx * dx + dy * dy;
 
-            if (distanceSq < (SNAKE_RADIUS + FOOD_RADIUS) ** 2) {
+            if (distanceSq < (SNAKE_RADIUS + FOOD_RADII[f.type]) ** 2) {
                 food.splice(i, 1);
-                snake.grow();
+                snake.grow(f.type);
             }
         }
 
-        // 6. Update score display
         if (snake.isPlayer) {
-            document.getElementById('player-score').textContent = snake.score;
+            document.getElementById('player-score').textContent = snake.getTotalSize().toFixed(0);
         }
     });
 
@@ -875,46 +1187,48 @@ function update() {
     updateLeaderboard();
 }
 
-
-// --- Leaderboard ---
+// --- Leaderboard, Kill Log, Game Loop, Input Handling ---
 function updateLeaderboard() {
     const leaderboardDiv = document.getElementById('leaderboard');
     const sortedSnakes = snakes
         .filter(s => s.isAlive)
-        .sort((a, b) => b.score - a.score)
+        .sort((a, b) => b.getTotalSize() - a.getTotalSize())
         .slice(0, 6);
 
-    leaderboardDiv.innerHTML = sortedSnakes.map((snake, index) => `
-        <div class="leaderboard-item flex justify-between p-1 rounded-md text-gray-200 
-            ${snake.isPlayer ? 'player-snake' : 'hover:bg-gray-800'}
-            ${snake.isKiller ? 'killer-flash' : ''}" style="color: ${snake.isPlayer ? '#3b82f6' : snake.color}">
-            <span class="font-medium">#${index + 1}</span>
-            <span class="font-semibold truncate text-right">${snake.name}</span>
-            <span class="font-bold">${snake.score}</span>
-        </div>
-    `).join('');
+    leaderSnake = sortedSnakes[0];
+
+    leaderboardDiv.innerHTML = sortedSnakes.map((snake, index) => {
+        return `
+            <div class="leaderboard-item flex justify-between p-1 rounded-md text-gray-200 
+                ${snake.isPlayer ? 'player-snake' : 'hover:bg-gray-800'}
+                ${snake.isKiller ? 'killer-flash' : ''}" style="color: ${snake.isPlayer ? '#3b82f6' : snake.color}">
+                <span class="font-medium">#${index + 1}</span>
+                <span class="font-semibold truncate text-right ${snake.isExplosive ? 'text-yellow-400' : ''}">
+                    ${snake.name} ${snake.isExplosive ? '💥' : ''}
+                    (Kills: ${snake.killCount})
+                </span>
+                <span class="font-bold">${snake.getTotalSize().toFixed(0)}</span>
+            </div>
+        `;
+    }).join('');
 }
 
-// --- Kill Log Display ---
 function updateKillLog() {
     const logDiv = document.getElementById('kill-log');
-    
     logDiv.innerHTML = killLog.map(logEntry => {
         const killerColor = logEntry.killer === 'You' ? 'text-green-400' : 'text-yellow-400';
         const victimColor = logEntry.victim === 'You' ? 'text-red-400' : 'text-gray-400';
-        
+        const explosion = logEntry.isExplosive ? '💥' : '';
+
         return `<p class="text-xs text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis">
             <span class="${killerColor} font-bold">${logEntry.killer}</span> killed 
-            <span class="${victimColor} font-bold">${logEntry.victim}</span>
+            <span class="${victimColor} font-bold">${logEntry.victim}</span> ${explosion}
         </p>`;
     }).join('');
 }
 
 
 // --- Game Loop and Control ---
-const targetFPS = 60;
-const frameDuration = 1000 / targetFPS;
-
 function gameLoop(timestamp) {
     if (!gameRunning) return;
 
@@ -929,27 +1243,26 @@ function gameLoop(timestamp) {
     animationFrameId = requestAnimationFrame(gameLoop);
 }
 
-// --- Input Handling (Mouse/Touch Steering) ---
+// --- Input Handling (Steering and Sprinting) ---
 canvas.addEventListener('mousemove', handleInput, false);
 canvas.addEventListener('touchmove', (e) => {
     e.preventDefault(); 
     handleInput(e.touches[0]);
 }, false);
 
+canvas.addEventListener('mousedown', handleSprintStart, false);
+canvas.addEventListener('mouseup', handleSprintEnd, false);
+canvas.addEventListener('touchstart', handleSprintStart, false);
+canvas.addEventListener('touchend', handleSprintEnd, false);
+canvas.addEventListener('touchcancel', handleSprintEnd, false); 
+
 function handleInput(event) {
     if (!playerSnake || !gameRunning || !playerSnake.isAlive) return; 
 
-    let clientX, clientY;
-    if (event.touches) {
-        clientX = event.touches[0].clientX;
-        clientY = event.touches[0].clientY;
-    } else {
-        clientX = event.clientX;
-        clientY = event.clientY;
-    }
-
     const rect = canvas.getBoundingClientRect();
-    // Calculate position relative to the canvas
+    const clientX = event.clientX || event.pageX;
+    const clientY = event.clientY || event.pageY;
+    
     const viewX = clientX - rect.left;
     const viewY = clientY - rect.top;
 
@@ -960,6 +1273,29 @@ function handleInput(event) {
 
     playerSnake.setTargetAngle(targetAngle);
 }
+
+function handleSprintStart(event) {
+    if (playerSnake && playerSnake.isAlive) {
+        if (event.type === 'mousedown' && event.button === 2) return; 
+        
+        playerSnake.isSprinting = true;
+        
+        if (event.touches && event.touches[0]) {
+            handleInput(event.touches[0]);
+        }
+    }
+}
+
+function handleSprintEnd(event) {
+    if (playerSnake && playerSnake.isAlive) {
+        if (event.type === 'mouseup' || event.type === 'touchend' || event.type === 'touchcancel') {
+             playerSnake.isSprinting = false;
+        }
+    }
+}
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
 
 // Start the game on load
 window.onload = initGame;
