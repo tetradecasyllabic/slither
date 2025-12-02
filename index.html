@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slither AI Arena (Predator Mode)</title>
+    <title>Slither AI Arena</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
@@ -87,9 +87,9 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const VIEW_SIZE = { width: 800, height: 600 };
-const WORLD_SIZE = 4000; // DOUBLED: The game world is this large
-const MAX_FOOD = 400;    // DOUBLED
-const MAX_AI_SNAKES = 30; // DOUBLED
+const WORLD_SIZE = 4000; 
+const MAX_FOOD = 400;    
+const MAX_AI_SNAKES = 30; 
 const SNAKE_RADIUS = 5;
 const FOOD_RADIUS = 2;
 const INITIAL_SPEED = 1.8; 
@@ -97,18 +97,20 @@ const TURN_RATE = 0.06;
 const MIN_BODY_DISTANCE = SNAKE_RADIUS * 1.5; 
 
 // AI Tuned Parameters
-const LOOK_AHEAD_DISTANCE = 250; 
+const LOOK_AHEAD_DISTANCE = 300; // Increased for more proactive avoidance
 const COLLISION_DANGER_RADIUS = SNAKE_RADIUS * 3.5; 
 const EDGE_AVOIDANCE_MARGIN = 150; 
 const FOOD_SEARCH_RADIUS_SQ = 700 * 700; 
 const HUNT_RADIUS_SQ = 1000 * 1000; // AI will hunt the leader if within this square distance
+const PREDATOR_PREDICTION_DISTANCE = 150; // How far ahead AI predicts the leader's movement to cut them off
+const GIVE_UP_TIME_FRAMES = 150; // 2.5 seconds at 60 FPS
 
 // Maximum angular difference allowed for a food target (135 degrees)
 const MAX_FOOD_ANGLE_DIFF = Math.PI * 0.75; 
 
 // Leader Indicator Parameters
-const ARROW_MARGIN = 30; // How far the edge indicator sits from the canvas border
-const ARROW_SIZE = 10;   // Size of the indicator triangle
+const ARROW_MARGIN = 30; 
+const ARROW_SIZE = 10;   
 
 // Kill Log Configuration
 const MAX_KILL_LOG = 5;
@@ -118,7 +120,7 @@ let gameRunning = false;
 let cameraX = 0;
 let cameraY = 0;
 let food = []; 
-let leaderSnake = null; // Global variable to store the current top snake
+let leaderSnake = null; 
 
 // Explicitly declare global game state variables
 let playerSnake;
@@ -152,6 +154,7 @@ class Snake {
         
         // +1 for clockwise (right), -1 for counter-clockwise (left), 0 for no avoidance in progress
         this.avoidanceDirection = 0; 
+        this.tempWanderTimer = 0; // New: Timer to force non-hunting/pure avoidance behavior
 
         // --- STARTING POSITION LOGIC ---
         const padding = 100; 
@@ -303,7 +306,7 @@ function spawnFood() {
 }
 
 
-// --- Drawing (Updated to include Leader Indicator) ---
+// --- Drawing (Leader Indicator and general drawing) ---
 function draw() {
     // 1. Calculate Camera Offset
     if (playerSnake.isAlive && playerSnake.body.length > 0) {
@@ -365,7 +368,8 @@ function draw() {
         }
     }
 
-    // 5. Draw Leader Indicator (Updated with off-screen arrow)
+    // 5. Draw Leader Indicator
+    // Note: leaderSnake is still the absolute #1 snake for the indicator
     if (leaderSnake && leaderSnake.isAlive && leaderSnake.id !== playerSnake.id && playerSnake.body.length > 0 && leaderSnake.body.length > 0) {
         const leaderHead = leaderSnake.body[0];
         const playerHead = playerSnake.body[0];
@@ -441,7 +445,7 @@ function draw() {
     }
 }
 
-// --- AI Logic (Updated with Predator Mode) ---
+// --- AI Logic (Updated with Predator Kill Strategy and Give-Up Logic) ---
 function runAISnake(snake) {
     if (!snake.isAlive) return;
 
@@ -450,7 +454,7 @@ function runAISnake(snake) {
     let avoidanceRequired = false; 
     let obstaclePos = null; 
     
-    // Calculate the point the snake will reach soon
+    // Calculate the point the snake will reach soon, based on the LOOK_AHEAD_DISTANCE
     const lookAheadX = head.x + Math.cos(snake.angle) * LOOK_AHEAD_DISTANCE;
     const lookAheadY = head.y + Math.sin(snake.angle) * LOOK_AHEAD_DISTANCE;
 
@@ -467,10 +471,12 @@ function runAISnake(snake) {
         
         snake.targetAngle = targetAngle;
         snake.avoidanceDirection = 0; 
+        snake.tempWanderTimer = 0; // Reset timer on boundary avoidance
         return; 
     }
 
     // --- 1. COLLISION CHECK (Check Look-Ahead Point against ALL snake bodies) ---
+    // This is CRITICAL: If the AI's projected path hits a body, hunting is cancelled/avoidance is triggered.
     for (const s of snakes) {
         if (!s.isAlive) continue; 
         
@@ -496,7 +502,11 @@ function runAISnake(snake) {
 
     // --- 2. ACTION ---
     if (avoidanceRequired && obstaclePos) {
-        // --- AVOIDANCE MANEUVER ---
+        // --- AVOIDANCE MANEUVER (PRIORITIZED OVER HUNTING, TRIGGERING 'GIVE UP') ---
+        
+        // If we are forced to avoid, we are "giving up" the current hunt/food target temporarily
+        // to prevent circling into danger.
+        snake.tempWanderTimer = GIVE_UP_TIME_FRAMES; 
         
         // If not already avoiding, pick a random direction (+1 or -1)
         if (snake.avoidanceDirection === 0) {
@@ -515,27 +525,58 @@ function runAISnake(snake) {
         targetAngle += (Math.random() - 0.5) * 0.4; 
         
     } else {
-        // --- PREDATOR MODE (Target Leader) ---
+        // --- PREDATOR MODE / FOOD SEEKING ---
         snake.avoidanceDirection = 0; // Path is clear
         
-        let hunting = false;
-        if (leaderSnake && leaderSnake.isAlive && leaderSnake.id !== snake.id && snake.body.length > 0) {
-            const leaderHead = leaderSnake.body[0];
-            
-            const dxLeader = leaderHead.x - head.x;
-            const dyLeader = leaderHead.y - head.y;
-            const distSqLeader = dxLeader * dxLeader + dyLeader * dyLeader;
-
-            // Hunt the leader if they are close enough
-            if (distSqLeader < HUNT_RADIUS_SQ) {
-                targetAngle = Math.atan2(dyLeader, dxLeader);
-                targetAngle += (Math.random() - 0.5) * 0.05; // Small jitter
-                hunting = true;
-            }
+        // Decrement the forced wandering timer
+        if (snake.tempWanderTimer > 0) {
+            snake.tempWanderTimer--;
         }
 
+        let hunting = false;
+        
+        // Only hunt if the temporary wander timer has expired
+        if (snake.tempWanderTimer === 0) {
+            // New logic: Get top 3 snakes (excluding self)
+            const topSnakes = snakes
+                .filter(s => s.isAlive && s.id !== snake.id)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 3); // Grab top 3 available targets
+                
+            if (topSnakes.length > 0) {
+                // Randomly select one of the top available targets
+                const huntTarget = topSnakes[Math.floor(Math.random() * topSnakes.length)];
+                
+                const huntTargetHead = huntTarget.body[0];
+                
+                const dxLeader = huntTargetHead.x - head.x;
+                const dyLeader = huntTargetHead.y - head.y;
+                const distSqLeader = dxLeader * dxLeader + dyLeader * dyLeader;
+    
+                if (distSqLeader < HUNT_RADIUS_SQ) {
+                    // We are hunting!
+                    
+                    // --- PREDATOR KILL LOGIC ---
+                    // Aim for a predicted intercept point ahead of the target
+                    const leaderAngle = huntTarget.angle;
+    
+                    const predictedX = huntTargetHead.x + Math.cos(leaderAngle) * PREDATOR_PREDICTION_DISTANCE;
+                    const predictedY = huntTargetHead.y + Math.sin(leaderAngle) * PREDATOR_PREDICTION_DISTANCE;
+    
+                    const dxPredicted = predictedX - head.x;
+                    const dyPredicted = predictedY - head.y;
+                    
+                    targetAngle = Math.atan2(dyPredicted, dxPredicted);
+                    targetAngle += (Math.random() - 0.5) * 0.05; // Small jitter
+                    
+                    hunting = true;
+                }
+            }
+        } 
+
         if (!hunting) {
-            // --- HIGH-PRIORITY FOOD SEEKING (Default Behavior) ---
+            // --- HIGH-PRIORITY FOOD SEEKING / WANDERING ---
+            // If hunting is skipped (due to timer or distance), focus on food/wandering.
             
             let targetPosition = null;
             let minDistanceSq = Infinity;
@@ -571,10 +612,11 @@ function runAISnake(snake) {
             }
 
             // Execute Seeking/Wandering
-            if (targetPosition) {
+            if (nearestFood) {
                 // targetAngle is already calculated to be toward the accepted food
+                targetAngle += (Math.random() - 0.5) * 0.05; // Small jitter while eating
             } else {
-                // No viable food found or hunting, wander towards the center
+                // No viable food found or hunting is temporarily disabled, wander towards the center
                 const dxCenter = halfWorld - head.x;
                 const dyCenter = halfWorld - head.y;
                 targetAngle = Math.atan2(dyCenter, dxCenter);
@@ -618,7 +660,7 @@ function respawnPlayer() {
     }, 1000); 
 }
 
-// --- Collision and Update Logic (Updated to get leader first) ---
+// --- Collision and Update Logic (unchanged logic, only refactored) ---
 function update() {
     // Find the leader at the start of the update cycle for AI and drawing
     leaderSnake = getLeaderSnake(); 
@@ -676,6 +718,7 @@ function update() {
             }
 
             // 4b. Check for Head-to-Body Collision (Current snake dies)
+            // Note: We check from segment 1, as colliding with segment 0 (the head) is handled above.
             for (let i = 1; i < s.body.length; i++) { 
                 const segment = s.body[i];
                 const dx = head.x - segment.x;
@@ -737,155 +780,6 @@ function update() {
     updateLeaderboard();
 }
 
-// Function to find the top scoring snake
-function getLeaderSnake() {
-    return snakes
-        .filter(s => s.isAlive)
-        .sort((a, b) => b.score - a.score)[0] || playerSnake; // Default to player if no one else is alive
-}
-
-// --- Player Respawn Logic (unchanged) ---
-function respawnPlayer() {
-    if (playerSnake.isRespawning) return; 
-
-    playerSnake.isRespawning = true;
-    playerSnake.isAlive = false; 
-
-    if (playerSnake.body.length > 0) {
-        // Drop food upon death
-        playerSnake.body.forEach(segment => food.push(new Food(segment.x, segment.y)));
-        playerSnake.body = []; 
-    }
-
-    const statusDiv = document.getElementById('status-message');
-    document.getElementById('status-text').textContent = `You crashed! Respawning...`;
-    statusDiv.classList.remove('hidden');
-
-    setTimeout(() => {
-        playerSnake.reset(); 
-        playerSnake.isRespawning = false;
-        statusDiv.classList.add('hidden');
-    }, 1000); 
-}
-
-// --- Collision and Update Logic (Updated to get leader first) ---
-function update() {
-    // Find the leader at the start of the update cycle for AI and drawing
-    leaderSnake = getLeaderSnake(); 
-
-    snakes.forEach(snake => {
-        if (!snake.isAlive) {
-            if (snake.isPlayer && !snake.isRespawning) {
-                respawnPlayer();
-            } else if (!snake.isPlayer && !snake.isDeadAndAwaitingReset) {
-                snake.isDeadAndAwaitingReset = true;
-                snake.body.forEach(segment => food.push(new Food(segment.x, segment.y)));
-                setTimeout(() => {
-                    snake.reset();
-                    snake.isDeadAndAwaitingReset = false;
-                }, 5000);
-            }
-            return; 
-        }
-        
-        // 1. Run AI logic for non-player snakes
-        if (!snake.isPlayer) {
-            runAISnake(snake);
-        }
-
-        // 2. Move
-        snake.move();
-        const head = snake.body[0];
-
-        // 3. World Boundary Check
-        const isOutOfBounds = head.x < 0 || head.x > WORLD_SIZE ||
-                              head.y < 0 || head.y > WORLD_SIZE;
-
-        if (isOutOfBounds) {
-            snake.isAlive = false;
-            return; 
-        }
-
-        // 4. Collision with other snakes' bodies
-        let hitSnake = false;
-        for (const s of snakes) {
-            if (s.id === snake.id || !s.isAlive) continue; 
-
-            const otherHead = s.body[0];
-
-            // 4a. Check for Head-to-Head Collision (Mutual Death)
-            const dxHead = head.x - otherHead.x;
-            const dyHead = head.y - otherHead.y;
-            const distanceSqHead = dxHead * dxHead + dyHead * dyHead;
-
-            if (distanceSqHead < (SNAKE_RADIUS * 2) ** 2) {
-                snake.isAlive = false; 
-                s.isAlive = false;     
-                hitSnake = true;
-                break;
-            }
-
-            // 4b. Check for Head-to-Body Collision (Current snake dies)
-            for (let i = 1; i < s.body.length; i++) { 
-                const segment = s.body[i];
-                const dx = head.x - segment.x;
-                const dy = head.y - segment.y;
-                const distanceSq = dx * dx + dy * dy;
-
-                if (distanceSq < (SNAKE_RADIUS * 2) ** 2) {
-                    snake.isAlive = false; 
-                    hitSnake = true;
-                    
-                    if (s.isAlive) { 
-                        const killerName = s.name;
-                        const victimName = snake.name;
-                        
-                        killLog.unshift({ killer: killerName, victim: victimName });
-                        
-                        if (killLog.length > MAX_KILL_LOG) {
-                            killLog.pop();
-                        }
-                        updateKillLog(); 
-
-                        s.isKiller = true;
-                        setTimeout(() => { 
-                            if(s) s.isKiller = false;
-                            updateLeaderboard(); 
-                        }, 1000);
-                    }
-
-                    break;
-                }
-            }
-            if (hitSnake) break;
-        }
-
-        if (hitSnake) {
-            return; 
-        }
-
-        // 5. Food Eating
-        for (let i = food.length - 1; i >= 0; i--) {
-            const f = food[i];
-            const dx = head.x - f.x;
-            const dy = head.y - f.y;
-            const distanceSq = dx * dx + dy * dy;
-
-            if (distanceSq < (SNAKE_RADIUS + FOOD_RADIUS) ** 2) {
-                food.splice(i, 1);
-                snake.grow();
-            }
-        }
-
-        // 6. Update score display
-        if (snake.isPlayer) {
-            document.getElementById('player-score').textContent = snake.score;
-        }
-    });
-
-    spawnFood();
-    updateLeaderboard();
-}
 
 // --- Leaderboard (unchanged) ---
 function updateLeaderboard() {
