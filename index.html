@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Slither AI Arena</title>
+    <title>Slither AI Arena (Separated Layout)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
@@ -36,49 +36,72 @@
         .killer-flash {
             animation: flashRed 0.2s ease-in-out 5; 
         }
+
+        #info-panel {
+            /* Updated to match the canvas height exactly (600px) */
+            height: 600px; 
+            width: 280px;
+            box-sizing: border-box; 
+        }
     </style>
 </head>
 <body>
 
 <div class="min-h-screen p-4 flex flex-col items-center">
-    <h1 class="text-3xl font-bold text-white mb-6 mt-4">🐍 Slither AI Arena</h1>
+    <h1 class="text-3xl font-bold text-white mb-6 mt-4">🐍 Slither AI Arena (Predator Mode)</h1>
 
-    <!-- Canvas Wrapper for Overlay Positioning -->
-    <div id="canvas-wrapper" class="relative w-full max-w-4xl flex justify-center items-center">
-        <!-- Game Canvas Area -->
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
-        
-        <!-- Leaderboard Overlay -->
-        <div id="leaderboard-overlay" class="absolute top-4 right-4 z-10 w-48 bg-gray-900/80 backdrop-blur-sm p-3 rounded-lg border border-gray-700 shadow-xl">
-            <h2 class="text-lg font-bold text-gray-200 mb-2 border-b border-gray-700 pb-1">Leaderboard</h2>
-            <div id="leaderboard" class="space-y-1 text-xs">
-                <!-- Leaderboard items injected here -->
-            </div>
-            <div class="mt-3 pt-2 border-t border-gray-700">
-                <p class="text-sm font-semibold text-gray-400">Your Score:</p>
-                <p id="player-score" class="text-2xl font-extrabold text-green-400">0</p>
-            </div>
+    <!-- New Container for Side-by-Side Layout -->
+    <div id="game-and-info-container" class="flex gap-6 max-w-6xl w-full justify-center">
 
-            <!-- KILL LOG CONTAINER -->
-            <div class="mt-4 pt-2 border-t border-gray-700">
-                <h3 class="text-sm font-semibold text-red-400 mb-1">Kill Feed</h3>
-                <div id="kill-log" class="space-y-1 h-20 overflow-hidden">
-                    <!-- Kill messages will appear here -->
+        <!-- 1. Game Canvas Area -->
+        <div id="canvas-wrapper" class="relative flex-shrink-0">
+            <canvas id="gameCanvas" width="800" height="600"></canvas>
+            
+            <!-- Status Message Overlay (Centered) -->
+            <div id="status-message" class="absolute inset-0 flex items-center justify-center pointer-events-none hidden">
+                <div id="status-text" class="p-4 bg-red-800/80 text-red-300 rounded-lg text-2xl font-extrabold shadow-2xl animate-pulse">
+                    You crashed! Respawning...
                 </div>
             </div>
         </div>
 
-        <!-- Status Message Overlay (Centered) -->
-        <div id="status-message" class="absolute inset-0 flex items-center justify-center pointer-events-none hidden">
-            <div id="status-text" class="p-4 bg-red-800/80 text-red-300 rounded-lg text-2xl font-extrabold shadow-2xl animate-pulse">
-                You crashed! Respawning...
+        <!-- 2. Dedicated Info Panel (Leaderboard, Score, Kill Log, Minimap) -->
+        <div id="info-panel" class="bg-gray-900/80 backdrop-blur-sm p-4 rounded-lg border border-gray-700 shadow-xl flex flex-col">
+            
+            <!-- Leaderboard -->
+            <div class="mb-4">
+                <h2 class="text-xl font-bold text-gray-200 mb-2 border-b border-gray-700 pb-1">Leaderboard</h2>
+                <div id="leaderboard" class="space-y-1 text-sm">
+                    <!-- Leaderboard items injected here -->
+                </div>
             </div>
+
+            <!-- Player Score -->
+            <div class="mt-2 pt-2 border-t border-gray-700">
+                <p class="text-lg font-semibold text-gray-400">Your Score:</p>
+                <p id="player-score" class="text-3xl font-extrabold text-green-400">0</p>
+            </div>
+
+            <!-- Kill Log Container -->
+            <div class="mt-4 pt-2 border-t border-gray-700 flex-grow">
+                <h3 class="text-base font-semibold text-red-400 mb-1">Kill Feed</h3>
+                <div id="kill-log" class="space-y-1 h-20 overflow-hidden">
+                    <!-- Kill messages will appear here -->
+                </div>
+            </div>
+
+            <!-- Minimap Container (Fixed size) -->
+            <div id="minimap-container" class="mt-4 pt-4 border-t border-gray-700 flex-shrink-0">
+                <h3 class="text-base font-semibold text-blue-400 mb-2 text-center">World Map (4000x4000)</h3>
+                <canvas id="minimapCanvas" width="240" height="240" class="bg-gray-800 rounded-md border border-gray-600 w-full h-full"></canvas>
+            </div>
+
         </div>
     </div>
 
     <!-- Minimal Info Footer -->
     <div id="info-footer" class="text-sm text-gray-400 mt-4 p-3 bg-[#161b22] rounded-xl border border-gray-700">
-        <p>Controls: **Mouse/Touch** to steer | World Size: 4000 x 4000</p>
+        <p>Controls: **Mouse/Touch** to steer | Current View Size: 800 x 600</p>
     </div>
 </div>
 
@@ -86,6 +109,9 @@
 // --- Configuration and Constants ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const minimapCanvas = document.getElementById('minimapCanvas');
+const minimapCtx = minimapCanvas.getContext('2d');
+
 const VIEW_SIZE = { width: 800, height: 600 };
 const WORLD_SIZE = 4000; 
 const MAX_FOOD = 400;    
@@ -97,13 +123,17 @@ const TURN_RATE = 0.06;
 const MIN_BODY_DISTANCE = SNAKE_RADIUS * 1.5; 
 
 // AI Tuned Parameters
-const LOOK_AHEAD_DISTANCE = 300; // Increased for more proactive avoidance
+const LOOK_AHEAD_DISTANCE = 300; 
 const COLLISION_DANGER_RADIUS = SNAKE_RADIUS * 3.5; 
 const EDGE_AVOIDANCE_MARGIN = 150; 
 const FOOD_SEARCH_RADIUS_SQ = 700 * 700; 
-const HUNT_RADIUS_SQ = 1000 * 1000; // AI will hunt the leader if within this square distance
-const PREDATOR_PREDICTION_DISTANCE = 150; // How far ahead AI predicts the leader's movement to cut them off
-const GIVE_UP_TIME_FRAMES = 150; // 2.5 seconds at 60 FPS
+const HUNT_RADIUS_SQ = 750 * 750; 
+const PREDATOR_PREDICTION_DISTANCE = 150; 
+const GIVE_UP_TIME_FRAMES = 150; 
+
+// Minimap Parameters
+const MINIMAP_SIZE = 240; // Updated to match the new canvas size
+const MINIMAP_SCALE = WORLD_SIZE / MINIMAP_SIZE;
 
 // Maximum angular difference allowed for a food target (135 degrees)
 const MAX_FOOD_ANGLE_DIFF = Math.PI * 0.75; 
@@ -154,7 +184,7 @@ class Snake {
         
         // +1 for clockwise (right), -1 for counter-clockwise (left), 0 for no avoidance in progress
         this.avoidanceDirection = 0; 
-        this.tempWanderTimer = 0; // New: Timer to force non-hunting/pure avoidance behavior
+        this.tempWanderTimer = 0; // Timer to force non-hunting/pure avoidance behavior
 
         // --- STARTING POSITION LOGIC ---
         const padding = 100; 
@@ -264,10 +294,12 @@ function getRandomWorldPos() {
     return { x, y };
 }
 
-// --- Initialization & Spawning (unchanged) ---
+// --- Initialization & Spawning ---
 function initGame() {
     canvas.width = VIEW_SIZE.width;
     canvas.height = VIEW_SIZE.height;
+    minimapCanvas.width = MINIMAP_SIZE;
+    minimapCanvas.height = MINIMAP_SIZE;
 
     snakes = [];
     food = [];
@@ -306,7 +338,7 @@ function spawnFood() {
 }
 
 
-// --- Drawing (Leader Indicator and general drawing) ---
+// --- Drawing (Main Canvas) ---
 function draw() {
     // 1. Calculate Camera Offset
     if (playerSnake.isAlive && playerSnake.body.length > 0) {
@@ -369,16 +401,13 @@ function draw() {
     }
 
     // 5. Draw Leader Indicator
-    // Note: leaderSnake is still the absolute #1 snake for the indicator
     if (leaderSnake && leaderSnake.isAlive && leaderSnake.id !== playerSnake.id && playerSnake.body.length > 0 && leaderSnake.body.length > 0) {
         const leaderHead = leaderSnake.body[0];
         const playerHead = playerSnake.body[0];
         
-        // Coordinates of the leader's head on the screen (if visible)
         const drawX = leaderHead.x - cameraX;
         const drawY = leaderHead.y - cameraY;
         
-        // Check if leader is on-screen (with a small margin)
         const margin = 50;
         const isVisible = (drawX > -margin && drawX < VIEW_SIZE.width + margin &&
                            drawY > -margin && drawY < VIEW_SIZE.height + margin);
@@ -415,23 +444,19 @@ function draw() {
             const center_x = VIEW_SIZE.width / 2;
             const center_y = VIEW_SIZE.height / 2;
 
-            // Calculate the radius for the arrow to sit near the edge
             const maxRadius = Math.min(center_x, center_y);
             const arrowRadius = maxRadius - ARROW_MARGIN;
 
             const arrowX = center_x + Math.cos(arrowAngle) * arrowRadius;
             const arrowY = center_y + Math.sin(arrowAngle) * arrowRadius;
 
-            // 1. Translate to the arrow position
             ctx.translate(arrowX, arrowY);
-            // 2. Rotate to align with the target direction
             ctx.rotate(arrowAngle);
             
             ctx.fillStyle = '#ffeb3b';
             ctx.strokeStyle = '#000000';
             ctx.lineWidth = 2;
             
-            // Draw a triangle shape pointing right (along the angle 0)
             ctx.beginPath();
             ctx.moveTo(ARROW_SIZE, 0); // Tip
             ctx.lineTo(-ARROW_SIZE / 2, -ARROW_SIZE); // Bottom left
@@ -443,7 +468,76 @@ function draw() {
 
         ctx.restore();
     }
+    
+    // Draw the minimap after the main canvas is done
+    drawMinimap(); 
 }
+
+// --- Minimap Drawing ---
+function drawMinimap() {
+    minimapCtx.clearRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+    
+    // Draw World Boundary
+    minimapCtx.strokeStyle = '#30363d';
+    minimapCtx.lineWidth = 2;
+    minimapCtx.strokeRect(0, 0, MINIMAP_SIZE, MINIMAP_SIZE);
+    
+    // Get top 3 snakes for highlighting
+    const sortedSnakes = snakes
+        .filter(s => s.isAlive)
+        .sort((a, b) => b.score - a.score);
+
+    const topSnakes = sortedSnakes.slice(0, 3);
+    
+    // 1. Draw Food Density
+    minimapCtx.fillStyle = 'rgba(254, 243, 199, 0.5)'; // Light yellow, semi-transparent
+    for (const f of food) {
+        // Scale down food coordinates
+        const mapX = f.x / MINIMAP_SCALE;
+        const mapY = f.y / MINIMAP_SCALE;
+        minimapCtx.fillRect(mapX, mapY, 1, 1);
+    }
+
+    // 2. Draw Snakes (Heads only)
+    for (const snake of snakes) {
+        if (!snake.isAlive || snake.body.length === 0) continue;
+
+        const head = snake.body[0];
+        const mapX = head.x / MINIMAP_SCALE;
+        const mapY = head.y / MINIMAP_SCALE;
+
+        let drawColor = snake.color;
+        let drawRadius = 2;
+
+        if (snake.isPlayer) {
+            drawColor = '#3b82f6'; // Bright blue for player
+            drawRadius = 3;
+        } else if (topSnakes.includes(snake)) {
+            drawColor = '#ffeb3b'; // Yellow for top 3
+            drawRadius = 3;
+        }
+
+        minimapCtx.fillStyle = drawColor;
+        minimapCtx.beginPath();
+        minimapCtx.arc(mapX, mapY, drawRadius, 0, Math.PI * 2);
+        minimapCtx.fill();
+    }
+    
+    // 3. Highlight Player Position (Always on top for clarity)
+    if (playerSnake && playerSnake.isAlive && playerSnake.body.length > 0) {
+        const head = playerSnake.body[0];
+        const mapX = head.x / MINIMAP_SCALE;
+        const mapY = head.y / MINIMAP_SCALE;
+
+        // Draw a prominent white ring around the player's blue head for visibility
+        minimapCtx.strokeStyle = '#ffffff'; 
+        minimapCtx.lineWidth = 1.5;
+        minimapCtx.beginPath();
+        minimapCtx.arc(mapX, mapY, 4, 0, Math.PI * 2); 
+        minimapCtx.stroke();
+    }
+}
+
 
 // --- AI Logic (Updated with Predator Kill Strategy and Give-Up Logic) ---
 function runAISnake(snake) {
@@ -471,16 +565,14 @@ function runAISnake(snake) {
         
         snake.targetAngle = targetAngle;
         snake.avoidanceDirection = 0; 
-        snake.tempWanderTimer = 0; // Reset timer on boundary avoidance
+        snake.tempWanderTimer = 0; 
         return; 
     }
 
     // --- 1. COLLISION CHECK (Check Look-Ahead Point against ALL snake bodies) ---
-    // This is CRITICAL: If the AI's projected path hits a body, hunting is cancelled/avoidance is triggered.
     for (const s of snakes) {
         if (!s.isAlive) continue; 
         
-        // Check against own body (skipping the first few segments)
         const startSegment = (s.id === snake.id) ? 4 : 0;
         
         for (let i = startSegment; i < s.body.length; i++) { 
@@ -504,47 +596,36 @@ function runAISnake(snake) {
     if (avoidanceRequired && obstaclePos) {
         // --- AVOIDANCE MANEUVER (PRIORITIZED OVER HUNTING, TRIGGERING 'GIVE UP') ---
         
-        // If we are forced to avoid, we are "giving up" the current hunt/food target temporarily
-        // to prevent circling into danger.
         snake.tempWanderTimer = GIVE_UP_TIME_FRAMES; 
         
-        // If not already avoiding, pick a random direction (+1 or -1)
         if (snake.avoidanceDirection === 0) {
             snake.avoidanceDirection = Math.random() < 0.5 ? 1 : -1;
         }
 
-        // Steer away from the current obstacle position
         const dx = obstaclePos.x - head.x;
         const dy = obstaclePos.y - head.y;
         const angleToObstacle = Math.atan2(dy, dx);
 
-        // Turn perpendicular to the obstacle angle, adjusted by the avoidance direction
+        // Turn perpendicular to the obstacle angle
         targetAngle = angleToObstacle + snake.avoidanceDirection * Math.PI * 0.5; 
-        
-        // Add a small randomized component
-        targetAngle += (Math.random() - 0.5) * 0.4; 
         
     } else {
         // --- PREDATOR MODE / FOOD SEEKING ---
-        snake.avoidanceDirection = 0; // Path is clear
+        snake.avoidanceDirection = 0; 
         
-        // Decrement the forced wandering timer
         if (snake.tempWanderTimer > 0) {
             snake.tempWanderTimer--;
         }
 
         let hunting = false;
         
-        // Only hunt if the temporary wander timer has expired
         if (snake.tempWanderTimer === 0) {
-            // New logic: Get top 3 snakes (excluding self)
             const topSnakes = snakes
                 .filter(s => s.isAlive && s.id !== snake.id)
                 .sort((a, b) => b.score - a.score)
-                .slice(0, 3); // Grab top 3 available targets
+                .slice(0, 3); 
                 
             if (topSnakes.length > 0) {
-                // Randomly select one of the top available targets
                 const huntTarget = topSnakes[Math.floor(Math.random() * topSnakes.length)];
                 
                 const huntTargetHead = huntTarget.body[0];
@@ -557,7 +638,6 @@ function runAISnake(snake) {
                     // We are hunting!
                     
                     // --- PREDATOR KILL LOGIC ---
-                    // Aim for a predicted intercept point ahead of the target
                     const leaderAngle = huntTarget.angle;
     
                     const predictedX = huntTargetHead.x + Math.cos(leaderAngle) * PREDATOR_PREDICTION_DISTANCE;
@@ -567,7 +647,7 @@ function runAISnake(snake) {
                     const dyPredicted = predictedY - head.y;
                     
                     targetAngle = Math.atan2(dyPredicted, dxPredicted);
-                    targetAngle += (Math.random() - 0.5) * 0.05; // Small jitter
+                    targetAngle += (Math.random() - 0.5) * 0.05; 
                     
                     hunting = true;
                 }
@@ -576,9 +656,7 @@ function runAISnake(snake) {
 
         if (!hunting) {
             // --- HIGH-PRIORITY FOOD SEEKING / WANDERING ---
-            // If hunting is skipped (due to timer or distance), focus on food/wandering.
             
-            let targetPosition = null;
             let minDistanceSq = Infinity;
             let nearestFood = null;
 
@@ -599,22 +677,18 @@ function runAISnake(snake) {
                 const dy = nearestFood.y - head.y;
                 targetAngle = Math.atan2(dy, dx);
                 
-                // Calculate angular difference and reject food too far behind
                 let angleDiff = targetAngle - snake.angle;
                 if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
                 if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
                 
                 if (Math.abs(angleDiff) > MAX_FOOD_ANGLE_DIFF) {
                     nearestFood = null; 
-                } else {
-                    targetPosition = nearestFood;
                 }
             }
 
             // Execute Seeking/Wandering
             if (nearestFood) {
-                // targetAngle is already calculated to be toward the accepted food
-                targetAngle += (Math.random() - 0.5) * 0.05; // Small jitter while eating
+                targetAngle += (Math.random() - 0.5) * 0.05; 
             } else {
                 // No viable food found or hunting is temporarily disabled, wander towards the center
                 const dxCenter = halfWorld - head.x;
@@ -633,10 +707,10 @@ function runAISnake(snake) {
 function getLeaderSnake() {
     return snakes
         .filter(s => s.isAlive)
-        .sort((a, b) => b.score - a.score)[0] || playerSnake; // Default to player if no one else is alive
+        .sort((a, b) => b.score - a.score)[0] || playerSnake; 
 }
 
-// --- Player Respawn Logic (unchanged) ---
+// --- Player Respawn Logic ---
 function respawnPlayer() {
     if (playerSnake.isRespawning) return; 
 
@@ -660,7 +734,7 @@ function respawnPlayer() {
     }, 1000); 
 }
 
-// --- Collision and Update Logic (unchanged logic, only refactored) ---
+// --- Collision and Update Logic ---
 function update() {
     // Find the leader at the start of the update cycle for AI and drawing
     leaderSnake = getLeaderSnake(); 
@@ -718,7 +792,6 @@ function update() {
             }
 
             // 4b. Check for Head-to-Body Collision (Current snake dies)
-            // Note: We check from segment 1, as colliding with segment 0 (the head) is handled above.
             for (let i = 1; i < s.body.length; i++) { 
                 const segment = s.body[i];
                 const dx = head.x - segment.x;
@@ -781,7 +854,7 @@ function update() {
 }
 
 
-// --- Leaderboard (unchanged) ---
+// --- Leaderboard ---
 function updateLeaderboard() {
     const leaderboardDiv = document.getElementById('leaderboard');
     const sortedSnakes = snakes
@@ -800,7 +873,7 @@ function updateLeaderboard() {
     `).join('');
 }
 
-// --- Kill Log Display (unchanged) ---
+// --- Kill Log Display ---
 function updateKillLog() {
     const logDiv = document.getElementById('kill-log');
     
@@ -808,7 +881,7 @@ function updateKillLog() {
         const killerColor = logEntry.killer === 'You' ? 'text-green-400' : 'text-yellow-400';
         const victimColor = logEntry.victim === 'You' ? 'text-red-400' : 'text-gray-400';
         
-        return `<p class="text-[10px] text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis">
+        return `<p class="text-xs text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis">
             <span class="${killerColor} font-bold">${logEntry.killer}</span> killed 
             <span class="${victimColor} font-bold">${logEntry.victim}</span>
         </p>`;
@@ -816,7 +889,7 @@ function updateKillLog() {
 }
 
 
-// --- Game Loop and Control (unchanged) ---
+// --- Game Loop and Control ---
 const targetFPS = 60;
 const frameDuration = 1000 / targetFPS;
 
@@ -834,7 +907,7 @@ function gameLoop(timestamp) {
     animationFrameId = requestAnimationFrame(gameLoop);
 }
 
-// --- Input Handling (Mouse/Touch Steering, unchanged) ---
+// --- Input Handling (Mouse/Touch Steering) ---
 canvas.addEventListener('mousemove', handleInput, false);
 canvas.addEventListener('touchmove', (e) => {
     e.preventDefault(); 
@@ -854,6 +927,7 @@ function handleInput(event) {
     }
 
     const rect = canvas.getBoundingClientRect();
+    // Calculate position relative to the canvas
     const viewX = clientX - rect.left;
     const viewY = clientY - rect.top;
 
