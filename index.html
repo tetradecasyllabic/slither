@@ -146,6 +146,9 @@ const ARROW_SIZE = 10;
 const MAX_KILL_LOG = 5;
 let killLog = []; 
 
+// New constant for food redistribution interval (2 minutes in milliseconds)
+const FOOD_REDISTRIBUTION_INTERVAL = 120000; 
+
 let gameRunning = false;
 let cameraX = 0;
 let cameraY = 0;
@@ -157,6 +160,7 @@ let playerSnake;
 let snakes = [];
 let animationFrameId = null; 
 let lastTime = 0; 
+let foodRedistributionTimer = null; // Timer for food redistribution
 
 // Snake Class
 class Snake {
@@ -329,11 +333,29 @@ function initGame() {
     canvas.onclick = null;
     canvas.ontouchstart = null;
     updateKillLog(); 
+
+    // 5. Start the food redistribution timer
+    if (foodRedistributionTimer) clearInterval(foodRedistributionTimer);
+    foodRedistributionTimer = setInterval(redistributeFood, FOOD_REDISTRIBUTION_INTERVAL);
 }
 
 function spawnFood() {
     while (food.length < MAX_FOOD) {
         food.push(new Food(getRandomWorldPos().x, getRandomWorldPos().y));
+    }
+}
+
+/**
+ * Randomly changes the position of all uneaten food on the map.
+ * This is called periodically by the timer set up in initGame.
+ */
+function redistributeFood() {
+    console.log("Redistributing all uneaten food...");
+    for (const f of food) {
+        // Assign new random world coordinates
+        const newPos = getRandomWorldPos();
+        f.x = newPos.x;
+        f.y = newPos.y;
     }
 }
 
